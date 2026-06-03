@@ -295,6 +295,7 @@ class ChaoxingAuto:
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         """)
         self.page = await self.context.new_page()
+        self.page.on("dialog", lambda d: d.accept())
         print("[启动] 浏览器已启动")
 
     async def random_delay(self):
@@ -461,15 +462,9 @@ class ChaoxingAuto:
             await asyncio.sleep(3)
             print(f"[选课] 当前页面: {self.page.url[:80]}")
 
-        await asyncio.sleep(5)
+        await asyncio.sleep(3)
 
-        # 进入章节学习页
-        if "studentstudy" not in self.page.url:
-            await self._enter_first_chapter()
-            await asyncio.sleep(5)
-
-        print(f"[选课] 最终页面: {self.page.url[:100]}")
-        print("[选课] 课程页面已加载")
+        print(f"[选课] 已进入课程: {self.page.url[:80]}")
         return True
 
     async def _enter_first_chapter(self):
@@ -1063,15 +1058,26 @@ class ChaoxingAuto:
     async def _answer_question(self, frame, q_el, num: int):
         """解答单个题目"""
         try:
-            # 提取题目文本
-            title_el = q_el.locator(
-                ".Zy_TItle, .mark_name, h3, "
-                "div[class*='title'], p.mark_name"
-            ).first
-            q_text = (await title_el.text_content() or "").strip()
-            # 清理题号
-            q_text = re.sub(r'^[\d\s.、]+', '', q_text).strip()
+            # 提取题目文本 — 先尝试专门的标题元素, 失败则取整个容器文本
+            q_text = ""
+            for sel in [".Zy_TItle", ".mark_name", "h3", "div[class*='title']"]:
+                try:
+                    el = q_el.locator(sel).first
+                    if await el.count() > 0:
+                        q_text = (await el.text_content(timeout=3000) or "").strip()
+                        if q_text:
+                            break
+                except Exception:
+                    continue
 
+            if not q_text:
+                try:
+                    q_text = (await q_el.text_content(timeout=5000) or "").strip()[:200]
+                except Exception:
+                    print(f"  [Q{num}] 无法提取题目文本, 跳过")
+                    return
+
+            q_text = re.sub(r'^[\d\s.、]+', '', q_text).strip()
             if not q_text:
                 return
 
@@ -1268,135 +1274,251 @@ class ChaoxingAuto:
             if url != "about:blank":
                 print(f"         - {url[:100]}")
 
-        # 如果当前不在章节学习页, 可能还在课程主页
+        # 如果当前不在章节学习页, 尝试切换到正确的标签页
         if "studentstudy" not in self.page.url:
-            print("  [调试] 当前不在章节学习页, 尝试寻找入口...")
-            # 尝试在iframe里找到章节学习页
-            found = False
-            for f in frames:
-                if "studentstudy" in (f.url or "") or "knowledge" in (f.url or ""):
-                    found = True
+            print("  [调试] 当前不在章节学习页, 检查其他标签页...")
+            switched = False
+            for p in self.context.pages:
+                if "studentstudy" in p.url or "knowledge" in p.url:
+                    self.page = p
+                    print(f"  [调试] 已切换到: {p.url[:80]}")
+                    switched = True
                     break
-            if not found:
-                await self._enter_first_chapter()
-                await asyncio.sleep(5)
+            if not switched:
+                print("  [调试] 未找到章节页, 请手动点击章节后按回车")
+                await asyncio.get_event_loop().run_in_executor(None, input)
+                # 再次尝试
+                for p in self.context.pages:
+                    if "studentstudy" in p.url:
+                        self.page = p
+                        break
                 frames = self.page.frames
-                print(f"  [调试] 重新检测, 共 {len(frames)} 个frame")
 
-        # 检测任务类型并处理
-        outer_iframe = self.page.frame_locator("#iframe")
+        # 获取任务点信息 (通过 mArg.attachments)
+        task_info = []
+        try:
+            iframe_frame = None
+            for f in self.page.frames:
+                if "knowledge/cards" in (f.url or ""):
+                    iframe_frame = f
+                    break
+            if iframe_frame:
+                task_info = await iframe_frame.evaluate("""() => {
+                    try {
+                        if (!window.mArg) {
+                            const match = document.body.innerHTML.match(/mArg\\s*=\\s*(\\{.*?\\});/s);
+                            if (match) window.mArg = JSON.parse(match[1]);
+                        }
+                        if (!window.mArg || !window.mArg.attachments) return [];
+                        return window.mArg.attachments.map((a, i) => ({
+                            index: i,
+                            type: a.type || 'unknown',
+                            jobid: a.jobid || '',
+                            name: (a.property && a.property.name) || '',
+                        }));
+                    } catch(e) { return []; }
+                }""")
+        except Exception:
+            pass
 
-        # 查找所有任务点tab
-        tabs = outer_iframe.locator(
-            ".prev_tab .tab, .mianmark .mark_tab, "
-            ".prev_ul li, div.tamark span"
-        )
-        tab_count = await tabs.count()
-
-        if tab_count > 1:
-            print(f"  [任务] 本章有 {tab_count} 个任务点")
-            for t in range(tab_count):
-                print(f"  [任务] 处理任务点 {t+1}/{tab_count}")
-                try:
-                    await tabs.nth(t).click()
-                    await asyncio.sleep(2)
-                except Exception:
-                    pass
-                await self._process_single_task()
-                await self.random_delay()
+        if task_info:
+            video_tasks = [t for t in task_info if t.get("type") == "video"]
+            print(f"  [任务] 本章有 {len(task_info)} 个任务点 ({len(video_tasks)} 个视频)")
         else:
-            await self._process_single_task()
+            print(f"  [任务] 未读取到任务点信息, 直接检测")
+
+        # 处理所有任务点
+        await self._process_single_task()
+
+        # 处理弹窗 (如"当前章节还有任务点未完成")
+        await self._handle_completion_dialog()
 
     async def _process_single_task(self):
-        """处理单个任务点"""
-        handled = await self.handle_video()
-        if not handled:
-            handled = await self.handle_quiz()
-        if not handled:
-            handled = await self.handle_document()
-        if not handled:
-            # 尝试在所有frame中找视频 (兜底)
+        """处理当前章节所有任务点"""
+        video_count = 0
+        played_srcs = set()  # 记录已播放视频的src防重复
+
+        for round_num in range(20):
+            # 等页面加载/刷新iframe
+            if round_num > 0:
+                await asyncio.sleep(5)
+
+            # 扫描所有 video frame
+            found_new = False
             for frame in self.page.frames:
-                url = frame.url or ""
-                if "video" in url or "ananas" in url:
-                    print(f"  [任务] 在frame中发现视频: {url[:80]}")
-                    try:
-                        video = frame.locator("video, #video_html5_api").first
-                        if await video.count() > 0:
-                            speed = self.config["video_speed"]
-                            skip = self.config.get("video_skip", False)
-                            if skip:
-                                # 等duration有效
-                                for _ in range(30):
-                                    dur = await frame.evaluate("""() => {
-                                        const v = document.querySelector('video');
-                                        return v ? v.duration : 0;
-                                    }""")
-                                    if dur and dur > 0 and dur != float('inf'):
-                                        break
-                                    await asyncio.sleep(1)
-                                await frame.evaluate(f"""() => {{
-                                    const v = document.querySelector('video');
-                                    if (v && v.duration > 0 && isFinite(v.duration)) {{
-                                        v.muted = true;
-                                        v.currentTime = Math.max(0, v.duration - 0.5);
-                                        v.playbackRate = 16;
-                                        v.play().catch(() => {{}});
-                                        setTimeout(() => {{ if (!v.ended) v.dispatchEvent(new Event('ended')); }}, 2000);
-                                    }}
-                                }}""")
-                                print(f"  [视频] 秒过 - 在frame中强制结束")
-                            else:
-                                await frame.evaluate(f"""() => {{
-                                    const v = document.querySelector('video');
-                                    if (v) {{
-                                        Object.defineProperty(v, 'playbackRate', {{
-                                            get() {{ return {speed}; }}, set() {{ return; }}
-                                        }});
-                                        v.defaultPlaybackRate = {speed};
-                                        v.playbackRate = {speed};
-                                        v.muted = true; v.play();
-                                    }}
-                                }}""")
-                                print(f"  [视频] 高速={speed}x - 在frame中播放")
-                            # 等待完成 + 处理弹题
-                            for tick in range(7200):
-                                state = await frame.evaluate("""() => {
-                                    const v = document.querySelector('video');
-                                    if (!v) return {done: true, paused: false};
-                                    return {
-                                        done: v.ended || (v.duration > 0 && v.currentTime >= v.duration - 1),
-                                        paused: v.paused
-                                    };
-                                }""")
-                                if state["done"]:
-                                    print("  [视频] 播放完成!")
-                                    self.stats["videos"] += 1
-                                    handled = True
-                                    break
-                                if state["paused"] and not skip:
-                                    # 尝试点击弹题选项然后恢复播放
-                                    try:
-                                        popups = frame.locator(".ans-videoquiz:visible, .videoquiz-popup:visible")
-                                        if await popups.count() > 0:
-                                            await self._handle_video_popup(frame)
-                                    except Exception:
-                                        pass
-                                    await frame.evaluate("() => { const v = document.querySelector('video'); if (v) v.play(); }")
-                                await asyncio.sleep(1)
-                    except Exception:
-                        pass
-                    if handled:
-                        break
-            if not handled:
-                print("  [任务] 未识别到可处理的任务类型")
-                # 保存截图便于调试
+                furl = frame.url or ""
+                if "video" not in furl and "ananas" not in furl:
+                    continue
                 try:
-                    ss_path = Path(__file__).parent / "debug_screenshot.png"
-                    await self.page.screenshot(path=str(ss_path))
-                    print(f"  [调试] 截图已保存: {ss_path}")
+                    info = await frame.evaluate("""() => {
+                        const v = document.querySelector('video');
+                        if (!v) return null;
+                        return {
+                            ended: v.ended,
+                            duration: v.duration || 0,
+                            currentTime: v.currentTime || 0,
+                            src: v.src || v.currentSrc || ''
+                        };
+                    }""")
+                    if not info:
+                        continue
+
+                    src = info.get("src", "")
+                    # 跳过已播过的 (按src去重)
+                    if src and src in played_srcs:
+                        continue
+                    # 跳过已播完的
+                    if info.get("ended"):
+                        if src:
+                            played_srcs.add(src)
+                        continue
+                    d = info.get("duration", 0)
+                    c = info.get("currentTime", 0)
+                    if d > 0 and c >= d - 1:
+                        if src:
+                            played_srcs.add(src)
+                        continue
+
+                    # 找到未播放的视频
+                    video_count += 1
+                    found_new = True
+                    print(f"  [视频] 处理第 {video_count} 个视频")
+                    await self._play_video_in_frame(frame)
+                    if src:
+                        played_srcs.add(src)
+
+                    # 播完后处理弹窗, 然后重新扫描
+                    await self._handle_completion_dialog()
+                    break
+
                 except Exception:
-                    pass
+                    continue
+
+            if not found_new:
+                # 没找到新视频, 再等一轮看看页面是否会加载新的
+                if round_num == 0:
+                    continue  # 第一轮没找到可能是还在加载
+                break
+
+        if video_count > 0:
+            print(f"  [视频] 共处理 {video_count} 个视频")
+
+        # 处理测验和文档
+        await self.handle_quiz()
+        await self.handle_document()
+
+    async def _handle_completion_dialog(self):
+        """自动关闭所有弹窗 (不等用户确认)"""
+        await asyncio.sleep(1)
+        for _ in range(3):
+            try:
+                dialog = self.page.locator(
+                    ".layui-layer:visible, .layui-layer-dialog:visible, "
+                    ".alert-info:visible, .popupWrap:visible"
+                )
+                if await dialog.count() > 0:
+                    # 直接点掉所有可点的按钮
+                    btns = dialog.locator("a.layui-layer-btn0, a.layui-layer-btn1, "
+                                          "button, a.layui-layer-close")
+                    for i in range(await btns.count()):
+                        try:
+                            await btns.nth(i).click()
+                            break
+                        except Exception:
+                            continue
+                    await asyncio.sleep(0.5)
+            except Exception:
+                pass
+
+    async def _play_video_in_frame(self, frame):
+        """在指定frame中播放/秒过视频"""
+        speed = self.config["video_speed"]
+        skip = self.config.get("video_skip", False)
+
+        # 等 duration 有效
+        dur = 0
+        for attempt in range(60):
+            dur = await frame.evaluate("""() => {
+                const v = document.querySelector('video');
+                if (!v) return 0;
+                const d = v.duration;
+                return (d && isFinite(d) && d > 0) ? d : 0;
+            }""")
+            if isinstance(dur, (int, float)) and dur > 1:
+                break
+            if attempt == 5:
+                await frame.evaluate(
+                    "() => { const v = document.querySelector('video'); if (v) v.load(); }")
+            if attempt == 15:
+                await frame.evaluate(
+                    "() => { const v = document.querySelector('video'); if (v) v.play().catch(()=>{}); }")
+            await asyncio.sleep(1)
+
+        if not isinstance(dur, (int, float)) or dur <= 1:
+            print(f"  [视频] 元数据加载失败, 跳过")
+            return
+
+        if skip:
+            await frame.evaluate(f"""() => {{
+                const v = document.querySelector('video');
+                if (v && v.duration > 0 && isFinite(v.duration)) {{
+                    v.muted = true; v.volume = 0;
+                    v.currentTime = Math.max(0, v.duration - 0.5);
+                    v.playbackRate = 16;
+                    v.play().catch(() => {{}});
+                    setTimeout(() => {{ if (!v.ended) v.dispatchEvent(new Event('ended')); }}, 2000);
+                }}
+            }}""")
+            print(f"  [视频] 秒过 (duration={int(dur)}s)")
+        else:
+            await frame.evaluate(f"""() => {{
+                const v = document.querySelector('video');
+                if (v) {{
+                    v.muted = true; v.volume = 0;
+                    v.playbackRate = {speed};
+                    v.defaultPlaybackRate = {speed};
+                    v.play().catch(() => {{}});
+                    if (!window.__speedKeeper) {{
+                        window.__speedKeeper = setInterval(() => {{
+                            const v2 = document.querySelector('video');
+                            if (v2) {{ v2.playbackRate = {speed}; v2.muted = true; v2.volume = 0; }}
+                        }}, 3000);
+                    }}
+                }}
+            }}""")
+            print(f"  [视频] {speed}x 播放 (duration={int(dur)}s)")
+
+        # 等待完成
+        for tick in range(7200):
+            try:
+                state = await frame.evaluate("""() => {
+                    const v = document.querySelector('video');
+                    if (!v) return {done: true, current: 0, duration: 0};
+                    return {
+                        done: v.ended || (v.duration > 0 && v.currentTime >= v.duration - 1),
+                        current: Math.floor(v.currentTime),
+                        duration: Math.floor(v.duration),
+                        paused: v.paused
+                    };
+                }""")
+                if state.get("done"):
+                    print(f"  [视频] 播放完成! ({state['duration']}s)")
+                    self.stats["videos"] += 1
+                    return
+                if state.get("paused"):
+                    await frame.evaluate(f"""() => {{
+                        const v = document.querySelector('video');
+                        if (v) {{ v.playbackRate = {speed}; v.muted = true; v.volume = 0;
+                            if (v.paused) v.play().catch(() => {{}}); }}
+                    }}""")
+                if tick % 30 == 0 and tick > 0:
+                    d = state.get("duration", 0)
+                    c = state.get("current", 0)
+                    pct = int(c / d * 100) if d > 0 else 0
+                    print(f"  [视频] 进度: {c}s / {d}s ({pct}%)")
+            except Exception:
+                pass
+            await asyncio.sleep(1)
 
     # ---- 自动切换下一章 ----
     async def next_chapter(self) -> bool:
@@ -1422,8 +1544,7 @@ class ChaoxingAuto:
                 btn = self.page.locator(sel)
                 if await btn.count() > 0 and await btn.first.is_visible():
                     await btn.first.click()
-                    self.stats["chapters"] += 1
-                    print(f"\n[章节] === 切换到下一节 (已完成 {self.stats['chapters']} 节) ===")
+                    print(f"\n[章节] === 切换到下一节 ===")
                     await self.page.wait_for_load_state("domcontentloaded")
                     await asyncio.sleep(5)
                     return True
@@ -1443,8 +1564,7 @@ class ChaoxingAuto:
                     siblings = current.first.locator("xpath=following-sibling::*")
                     if await siblings.count() > 0:
                         await siblings.first.click()
-                        self.stats["chapters"] += 1
-                        print(f"\n[章节] === 切换到下一节 (已完成 {self.stats['chapters']} 节) ===")
+                        print(f"\n[章节] === 切换到下一节 ===")
                         await self.page.wait_for_load_state("domcontentloaded")
                         await asyncio.sleep(5)
                         return True
@@ -1475,7 +1595,6 @@ class ChaoxingAuto:
             if result:
                 print(f"[章节] 通过JS找到下一节: {result[:80]}")
                 await self.page.goto(result, wait_until="domcontentloaded", timeout=60000)
-                self.stats["chapters"] += 1
                 await asyncio.sleep(5)
                 return True
         except Exception:
@@ -1495,10 +1614,23 @@ class ChaoxingAuto:
         )
         if manual == "q":
             return False
-        # 用户手动点了下一节
-        self.stats["chapters"] += 1
+        # 用户手动点了下一节, 切换到正确标签页
+        for p in self.context.pages:
+            if "studentstudy" in p.url:
+                self.page = p
+                break
         await asyncio.sleep(3)
         return True
+
+    # ---- 获取章节标识 (用于去重) ----
+    def _chapter_key(self) -> str:
+        """从当前URL提取章节唯一标识"""
+        import urllib.parse
+        parsed = urllib.parse.urlparse(self.page.url)
+        params = urllib.parse.parse_qs(parsed.query)
+        chapter_id = params.get("chapterId", [""])[0]
+        knowledge_id = params.get("knowledgeid", [""])[0]
+        return chapter_id or knowledge_id or self.page.url
 
     # ---- 主运行循环 ----
     async def run(self):
@@ -1516,35 +1648,38 @@ class ChaoxingAuto:
 
         await self.random_delay()
 
-        # 2. 选择课程
+        # 2. 选择课程 (只选课, 不自动进章节)
         selected = await self.select_course()
         if not selected:
-            await self.go_to_course()
+            course_url = self.config.get("course_url", "")
+            if course_url:
+                await self.go_to_course()
 
-        # 3. 循环处理章节
+        # 3. 等用户手动点击第一个章节
+        print(f"\n{'='*60}")
+        print(f"  请在浏览器中点击要刷的第一个章节")
+        print(f"  点击后回到这里按回车, 脚本将自动开始")
+        print(f"{'='*60}")
+        await asyncio.get_event_loop().run_in_executor(
+            None, lambda: input("\n  按回车开始刷课...")
+        )
+
+        # 切换到用户正在操作的标签页 (可能是新打开的)
+        pages = self.context.pages
+        if len(pages) > 1:
+            # 找到包含 studentstudy/knowledge 的页面
+            for p in pages:
+                if "studentstudy" in p.url or "knowledge" in p.url:
+                    self.page = p
+                    print(f"[切换] 已切换到章节页: {p.url[:80]}")
+                    break
+            else:
+                # 没找到章节页, 用最后打开的标签页
+                self.page = pages[-1]
+                print(f"[切换] 已切换到最新标签页: {self.page.url[:80]}")
+
+        # 4. 自动刷所有章节
         await self.run_chapters()
-
-        # 4. 本课完成, 循环询问是否继续
-        while True:
-            print(f"\n{'='*60}")
-            print(f"  本课刷课完成!")
-            print(f"  视频: {self.stats['videos']} 个")
-            print(f"  题目: {self.stats['quizzes']} 道")
-            print(f"  章节: {self.stats['chapters']} 章")
-            print(f"{'='*60}")
-
-            again = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: input("\n继续刷下一门课? (y/n): ").strip().lower()
-            )
-            if again not in ("y", "yes", ""):
-                break
-
-            self.stats = {"videos": 0, "quizzes": 0, "chapters": 0}
-            selected = await self.select_course()
-            if not selected:
-                print("[选课] 未选择课程, 退出")
-                break
-            await self.run_chapters()
 
         # 最终退出确认
         await asyncio.get_event_loop().run_in_executor(
@@ -1552,24 +1687,37 @@ class ChaoxingAuto:
         )
 
     async def run_chapters(self):
-        """循环处理当前课程的所有章节"""
+        """自动循环刷章节"""
         chapter_num = 0
+
         while True:
+            await asyncio.sleep(3)
+
             chapter_num += 1
             print(f"\n{'='*60}")
-            print(f"  处理第 {chapter_num} 章")
+            print(f"  处理第 {chapter_num} 节")
             print(f"{'='*60}")
 
             await self.process_current_chapter()
+            self.stats["chapters"] += 1
+            print(f"  ✅ 第 {chapter_num} 节完成!")
 
+            # 自动翻下一节
             if not self.config["auto_next_chapter"]:
-                print("\n[完成] auto_next_chapter=False, 停止自动翻章")
                 break
 
             if not await self.next_chapter():
                 break
 
             await self.random_delay()
+
+        # 刷课结束统计
+        print(f"\n{'='*60}")
+        print(f"  刷课完成!")
+        print(f"  视频: {self.stats['videos']} 个")
+        print(f"  题目: {self.stats['quizzes']} 道")
+        print(f"  章节: {chapter_num} 节")
+        print(f"{'='*60}")
 
     async def cleanup(self):
         """清理资源"""
@@ -1613,6 +1761,14 @@ async def main():
                 config["ai"]["siliconflow"]["api_key"] = v
             elif k == "ai_openrouter_key":
                 config["ai"]["openrouter"]["api_key"] = v
+            elif k == "opencode_model":
+                config["ai"]["opencode"]["model"] = v
+            elif k == "custom_base_url":
+                config["ai"]["custom"]["base_url"] = v
+            elif k == "custom_api_key":
+                config["ai"]["custom"]["api_key"] = v
+            elif k == "custom_model":
+                config["ai"]["custom"]["model"] = v
             elif k in config:
                 config[k] = v
 
