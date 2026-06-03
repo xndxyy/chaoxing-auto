@@ -9,7 +9,7 @@ echo ========================================================
 echo.
 
 echo [1/3] Checking Node.js...
-where node >nul 2>nul
+where node >/dev/null 2>/dev/null
 if errorlevel 1 (
     echo   [ERROR] Node.js not found.
     echo   Install from: https://nodejs.org
@@ -19,15 +19,15 @@ if errorlevel 1 (
 for /f "delims=" %%i in ('node --version 2^>nul') do echo   [OK] Node.js %%i
 
 echo.
-echo [2/3] Setting npm mirror (China)...
-call npm config set registry https://registry.npmmirror.com >nul 2>nul
+echo [2/3] Setting npm mirror...
+call npm config set registry https://registry.npmmirror.com >/dev/null 2>/dev/null
 echo   [OK] Mirror set
 
 echo.
 echo [3/3] Installing OpenCode CLI...
-where opencode >nul 2>nul
+where opencode >/dev/null 2>/dev/null
 if not errorlevel 1 (
-    for /f "delims=" %%i in ('call opencode --version 2^>nul') do echo   [OK] Already installed: %%i
+    echo   [OK] Already installed
     goto done
 )
 call npm install -g opencode-ai
@@ -43,7 +43,7 @@ echo   [OK] OpenCode installed
 echo.
 echo ========================================================
 echo   [DONE] AI setup complete!
-echo   Start with:  启动.bat
+echo   Start with: start.bat
 echo ========================================================
 echo.
 pause

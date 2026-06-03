@@ -9,10 +9,10 @@ echo ========================================================
 echo.
 
 echo [1/3] Checking Python...
-python --version >nul 2>nul
+python --version >/dev/null 2>/dev/null
 if errorlevel 1 (
     echo   [ERROR] Python not found.
-    echo   Please install Python 3.10+ and check "Add Python to PATH"
+    echo   Please install Python 3.10+ and check Add Python to PATH
     pause
     exit /b 1
 )
@@ -42,8 +42,8 @@ echo.
 echo ========================================================
 echo   [DONE] Core setup complete!
 echo.
-echo   If you want AI auto-answering, run:  安装AI.bat
-echo   Then start with:  启动.bat
+echo   If you want AI answering, run: install_ai.bat
+echo   Then start with: start.bat
 echo ========================================================
 echo.
 echo ok > deps_ok.txt
