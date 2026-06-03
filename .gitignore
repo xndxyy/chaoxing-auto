@@ -5,3 +5,8 @@ debug_screenshot.png
 debug_next_chapter.png
 deps_ok.txt
 *.log
+
+# Old Chinese-named bat files (replaced by English names)
+安装.bat
+安装AI.bat
+启动.bat

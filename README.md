@@ -9,17 +9,19 @@
 - **多视频支持** — 一个章节多个视频自动逐个处理
 - **AI自动答题** — 章节测验、视频弹题，调用免费AI模型回答并自动提交
 - **自动翻章** — 当前章节全部完成后自动进入下一节
-- **防重复刷** — 已刷过的章节自动跳过
 - **多AI后端** — OpenCode免费模型 / SiliconFlow / OpenRouter / DeepSeek / OpenAI / 自定义中转站
 - **交互式菜单** — 零基础可用，不需要改代码
+
+> ⚠️ AI答题功能已开发完成，但因有题的课程已做完，暂未充分实测答题效果。视频刷课功能已验证稳定。欢迎测试反馈！
 
 ## 快速开始
 
 ### 方式一：零基础用户
 
-1. 安装 [Python 3.8+](https://www.python.org/downloads/)（安装时勾选 **Add to PATH**）
-2. 双击 `安装.bat` — 自动安装所有依赖
-3. 双击 `启动.bat` — 开始使用
+1. 安装 [Python 3.10+](https://www.python.org/downloads/)（安装时勾选 **Add to PATH**）
+2. 双击 `install.bat` — 安装核心依赖
+3. 双击 `install_ai.bat` — 安装AI答题（可选，需要 [Node.js](https://nodejs.org)）
+4. 双击 `start.bat` — 开始使用
 
 ### 方式二：命令行
 
@@ -27,12 +29,6 @@
 pip install playwright httpx
 playwright install chromium
 python menu.py
-```
-
-### 方式三：跳过菜单直接运行
-
-```bash
-python chaoxing_auto.py --no-headless
 ```
 
 ## 使用流程
@@ -73,13 +69,14 @@ python chaoxing_auto.py --no-headless
 | 16x 倍速 | 40分钟→2.5分钟 | 极限 |
 | ⚡ 秒过 | 2秒/视频 | 最快 |
 
-所有模式均配合进度上报劫持（`video_bypass`），服务器始终认为完整观看。
+所有模式均配合进度上报劫持，服务器始终认为完整观看。
 
 ## AI 答题
 
-支持多种 AI 后端，在菜单 `[3] AI设置` 中配置：
+在菜单 `[3] AI设置` 中配置：
 
 **免费方案：**
+
 | 后端 | 费用 | 模型 |
 |------|------|------|
 | OpenCode CLI | 完全免费 | DeepSeek V4 Flash / Big Pickle / MiMo V2.5 等 |
@@ -87,6 +84,7 @@ python chaoxing_auto.py --no-headless
 | OpenRouter | 有免费模型 | DeepSeek V3 |
 
 **付费/自定义：**
+
 | 后端 | 说明 |
 |------|------|
 | DeepSeek 官方 | 极低价 |
@@ -98,35 +96,41 @@ python chaoxing_auto.py --no-headless
 ```bash
 npm install -g opencode-ai
 ```
+或双击 `install_ai.bat`。
 
 ## 技术原理
 
 ### 视频秒过
 
-注入 JS 劫持学习通的 `sendTimePack` 进度上报函数（参考 [cxmooc-tools](https://github.com/CodFrm/cxmooc-tools) 实现）。上报给服务器的 `playingTime` 始终等于视频总时长，无论实际播放多久。
+注入 JS 劫持学习通的 `sendTimePack` 进度上报函数。上报给服务器的 `playingTime` 始终等于视频总时长，无论实际播放多久。
 
 ### 多视频处理
 
-通过 `mArg.attachments` 获取章节任务点列表，逐个扫描 video frame，按视频 src 去重，播完一个等待页面加载下一个后继续处理。
+逐个扫描章节内所有 video frame，按视频 src 去重，播完一个等待页面加载下一个后继续处理。
 
 ### AI 答题
 
-提取页面题目文本和选项 → 调用 AI 模型 → 解析答案 → 自动点选 → 自动提交。支持选择题、判断题、填空题，以及视频中途弹出的题目。
+提取页面题目文本和选项 → 调用 AI 模型 → 解析答案 → 自动点选 → 自动提交。
+支持选择题、判断题、填空题，以及视频中途弹出的题目。
 
 ## 项目结构
 
 ```
-├── menu.py              # 交互式菜单（入口）
+├── menu.py              # 交互式菜单入口
 ├── chaoxing_auto.py     # 核心自动化逻辑
-├── 安装.bat             # 一键安装环境
-├── 启动.bat             # 一键启动
-├── start.bat            # 英文版启动脚本
+├── install.bat          # 一键安装核心依赖
+├── install_ai.bat       # 一键安装AI答题(可选)
+├── start.bat            # 一键启动
 ├── config_example.json  # 配置模板
 ├── requirements.txt     # Python 依赖
 ├── 使用教程.md          # 零基础图文教程
 ├── LICENSE              # MIT
 └── README.md
 ```
+
+## 联系
+
+QQ: 3527413732
 
 ## 免责声明
 
