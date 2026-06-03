@@ -1,0 +1,36 @@
+{
+    "phone": "",
+    "password": "",
+    "course_url": "",
+
+    "video_speed": 8,
+    "video_skip": false,
+    "video_bypass": true,
+    "video_mute": true,
+    "auto_next_chapter": true,
+    "auto_answer": true,
+    "auto_submit": true,
+    "random_delay": [1, 3],
+
+    "ai": {
+        "provider": "opencode",
+
+        "opencode": {
+            "cmd": "opencode",
+            "model": "opencode/deepseek-v4-flash-free",
+            "timeout": 120
+        },
+
+        "siliconflow": {
+            "api_key": "",
+            "model": "deepseek-ai/DeepSeek-V3",
+            "base_url": "https://api.siliconflow.cn/v1/chat/completions"
+        },
+
+        "openrouter": {
+            "api_key": "",
+            "model": "deepseek/deepseek-chat-v3-0324:free",
+            "base_url": "https://openrouter.ai/api/v1/chat/completions"
+        }
+    }
+}

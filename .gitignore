@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+user_config.json
+debug_screenshot.png
+debug_next_chapter.png
+deps_ok.txt
+*.log
